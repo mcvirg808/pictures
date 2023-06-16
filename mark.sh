@@ -4,9 +4,9 @@ set -e
 function init_variables() {
     # Remaining code...
     # Initialize other variables
-    rtsp_source_1="rtsp://127.0.0.1:8554/office-test"
-    rtsp_source_2="rtsp://127.0.0.1:8554/office-test2"
-    rtsp_source_3="rtsp://127.0.0.1:8554/office-test3"
+    rtsp_source_1="rtsp://127.0.0.1:8554/office-test0"
+    rtsp_source_2="rtsp://127.0.0.1:8554/office-test1"
+    rtsp_source_3="rtsp://127.0.0.1:8554/office-test2"
 }
 
 function main() {
