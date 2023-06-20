@@ -158,7 +158,7 @@ function main() {
     # Build the pose estimation pipeline
     build_pose_estimation_pipeline
 
-	RECOGNITION_PIPELINE="hailocropper so-path=$CROPPER_SO function-name=face_recognition internal-offset=true name=cropper2 \
+    RECOGNITION_PIPELINE="hailocropper so-path=$CROPPER_SO function-name=face_recognition internal-offset=true name=cropper2 \
         hailoaggregator name=agg2 \
         cropper2. ! queue name=bypess2_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! agg2. \
         cropper2. ! queue name=pre_face_align_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
@@ -211,28 +211,28 @@ function main() {
         fpsdisplaysink video-sink=$video_sink_element name=hailo_display sync=false text-overlay=false \
         ${additional_parameters}"
 		
-	pose_PIPELINE="gst-launch-1.0 \
-		$source_element ! \
-		videoscale ! video/x-raw, pixel-aspect-ratio=1/1 ! videoconvert ! \
-		queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-		hailonet hef-path=$hef_path ! \
-		queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-		hailofilter so-path=$postprocess_so qos=false function-name=$network_name ! \
-		queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-		hailooverlay qos=false ! \
-		videoconvert ! \
-		$video_sink name=hailo_display sync=$sync_pipeline ${additional_parameters}"	
+     pose_PIPELINE="gst-launch-1.0 \
+	$source_element ! \
+	videoscale ! video/x-raw, pixel-aspect-ratio=1/1 ! videoconvert ! \
+	queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+	hailonet hef-path=$hef_path ! \
+	queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+	hailofilter so-path=$postprocess_so qos=false function-name=$network_name ! \
+	queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+	hailooverlay qos=false ! \
+	videoconvert ! \
+	$video_sink name=hailo_display sync=$sync_pipeline ${additional_parameters}"	
 
-	echo ${pose_PIPELINE}
-	if [ "$print_gst_launch_only" = true ]; then
-		exit 0
-	fi
-	eval "${pose_PIPELINE}"
+     echo ${pose_PIPELINE}
+     if [ "$print_gst_launch_only" = true ]; then
+	exit 0
+     fi
+     eval "${pose_PIPELINE}"
 	
-		echo ${face_pipeline}
-	if [ "$print_gst_launch_only" = true ]; then
-		exit 0
-	fi
+	echo ${face_pipeline}
+     if [ "$print_gst_launch_only" = true ]; then
+	exit 0
+     fi
 	eval "${face_pipeline}"
 
 }
