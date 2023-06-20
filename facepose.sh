@@ -106,10 +106,7 @@ function parse_args() {
                 exit 1
             fi
             shift
-        else
-            echo "Received invalid argument: $1. See expected arguments below:"
-            print_usage
-            exit 1
+
 		elif [ $1 == "--network" ]; then
             if [ $2 == "centerpose_416" ]; then
                 network_name="centerpose_416"
@@ -136,27 +133,6 @@ function parse_args() {
     # ...
 }
 
-function build_pose_estimation_pipeline() {
-	"videoscale ! video/x-raw, pixel-aspect-ratio=1/1 ! videoconvert ! \
-    queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-    hailonet hef-path=$pose_estimation_hef_path ! \
-    queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-    hailofilter so-path=$pose_estimation_postprocess_so qos=false function-name=$pose_estimation_network_name ! \
-    queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-    hailooverlay qos=false ! \
-    videoconvert ! \
-    hailoframesink name=hailo_display sync=$sync_pipeline"
-}
-
-function build_face_recognition_pipeline() {
-	"queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-    hailofilter so-path=$face_recognition_postprocess_so qos=false function-name=$face_recognition_network_name ! \
-    queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-    hailooverlay qos=false ! \
-    videoconvert ! \
-    hailoframesink name=hailo_face_recognition_display sync=$sync_pipeline"
-
-}
 
 function main() {
     init_variables $@
@@ -182,11 +158,83 @@ function main() {
     # Build the pose estimation pipeline
     build_pose_estimation_pipeline
 
-    # Build the face recognition pipeline
-    build_face_recognition_pipeline
+	RECOGNITION_PIPELINE="hailocropper so-path=$CROPPER_SO function-name=face_recognition internal-offset=true name=cropper2 \
+        hailoaggregator name=agg2 \
+        cropper2. ! queue name=bypess2_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! agg2. \
+        cropper2. ! queue name=pre_face_align_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        hailofilter so-path=$FACE_ALIGN_SO name=face_align_hailofilter use-gst-buffer=true qos=false ! \
+        queue name=detector_pos_face_align_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        hailonet hef-path=$RECOGNITION_HEF_PATH scheduling-algorithm=1 vdevice-key=$vdevice_key ! \
+        queue name=recognition_post_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        hailofilter so-path=$RECOGNITION_POST_SO name=face_recognition_hailofilter qos=false ! \
+        queue name=recognition_pre_agg_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        agg2. agg2. "
 
-    # Combine the pipelines and execute the GStreamer command
-    # ...
+    FACE_DETECTION_PIPELINE="hailonet hef-path=$hef_path scheduling-algorithm=1 vdevice-key=$vdevice_key ! \
+        queue name=detector_post_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        hailofilter so-path=$POSTPROCESS_SO name=face_detection_hailofilter qos=false config-path=$FACE_JSON_CONFIG_PATH function_name=$function_name"
+
+    FACE_TRACKER="hailotracker name=hailo_face_tracker class-id=-1 kalman-dist-thr=0.7 iou-thr=0.8 init-iou-thr=0.9 \
+                    keep-new-frames=2 keep-tracked-frames=6 keep-lost-frames=8 keep-past-metadata=true qos=false"
+
+    DETECTOR_PIPELINE="tee name=t hailomuxer name=hmux \
+        t. ! \
+            queue name=detector_bypass_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        hmux. \
+        t. ! \
+            videoscale name=face_videoscale method=0 n-threads=2 add-borders=false qos=false ! \
+            video/x-raw, pixel-aspect-ratio=1/1 ! \
+            queue name=pre_face_detector_infer_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+            $FACE_DETECTION_PIPELINE ! \
+            queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        hmux. \
+        hmux. "
+
+    face_pipeline="gst-launch-1.0 \
+        $source_element ! \
+        queue name=hailo_pre_convert_0 leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        videoconvert n-threads=2 qos=false ! \
+        queue name=pre_detector_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        $DETECTOR_PIPELINE ! \
+        queue name=pre_tracker_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        $FACE_TRACKER ! \
+        queue name=hailo_post_tracker_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        $RECOGNITION_PIPELINE ! \
+        queue name=hailo_pre_gallery_q leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        hailogallery gallery-file-path=$local_gallery_file \
+        load-local-gallery=true similarity-thr=.4 gallery-queue-size=20 class-id=-1 ! \
+        queue name=hailo_pre_draw2 leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        hailooverlay name=hailo_overlay qos=false show-confidence=false local-gallery=true line-thickness=5 font-thickness=2 landmark-point-radius=8 ! \
+        queue name=hailo_post_draw leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        videoconvert n-threads=4 qos=false name=display_videoconvert qos=false ! \
+        queue name=hailo_display_q_0 leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+        fpsdisplaysink video-sink=$video_sink_element name=hailo_display sync=false text-overlay=false \
+        ${additional_parameters}"
+		
+	pose_PIPELINE="gst-launch-1.0 \
+		$source_element ! \
+		videoscale ! video/x-raw, pixel-aspect-ratio=1/1 ! videoconvert ! \
+		queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+		hailonet hef-path=$hef_path ! \
+		queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+		hailofilter so-path=$postprocess_so qos=false function-name=$network_name ! \
+		queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
+		hailooverlay qos=false ! \
+		videoconvert ! \
+		$video_sink name=hailo_display sync=$sync_pipeline ${additional_parameters}"	
+
+	echo ${pose_PIPELINE}
+	if [ "$print_gst_launch_only" = true ]; then
+		exit 0
+	fi
+	eval "${pose_PIPELINE}"
+	
+		echo ${face_pipeline}
+	if [ "$print_gst_launch_only" = true ]; then
+		exit 0
+	fi
+	eval "${face_pipeline}"
+
 }
 
 main $@
